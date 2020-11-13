@@ -1,0 +1,10 @@
+# Don't include experiments results on github
+*out
+precomputed
+unittests
+
+# For use with nohup
+*.out
+
+# Classic for python
+__pycache__/
