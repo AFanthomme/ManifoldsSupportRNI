@@ -387,12 +387,11 @@ def aggregate_hessian_relu_D1(compute=True):
     plt.savefig('out/D1/relu_hessian/summary.pdf')
 
 
-def aggregate_dale():
-    folder = 'out/D2/dale/inhib_frac_0.25/'
+def aggregate_dale(folder = 'out/D2/dale/inhib_frac_0.25/'):
     n_seeds = 16
-    n = 1000
-    exc_idx = (0, 750)
-    inh_idx = (750, 1000)
+    n = 1024
+    exc_idx = (0, 768)
+    inh_idx = (768, 1024)
 
 
     lefts_elements = np.zeros((n_seeds, 3, n))
@@ -405,6 +404,13 @@ def aggregate_dale():
         U, sigmas, V = tch.svd(W, compute_uv=True)
         lefts_elements[seed] = U[:,:3].transpose(0,1).detach().cpu().numpy()
         rights_elements[seed] = V[:,:3].transpose(0,1).detach().cpu().numpy()
+
+        # This is now required due to change in svd behavior
+        for mode_idx in range(3):
+            if lefts_elements[seed, mode_idx].sum() < 0.:
+                lefts_elements[seed, mode_idx] = -lefts_elements[seed, mode_idx]
+                rights_elements[seed, mode_idx] = -rights_elements[seed, mode_idx]
+
         del U, V
 
     lefts_exc = lefts_elements[:,:, range(*exc_idx)]
@@ -425,10 +431,10 @@ def aggregate_dale():
 
 
     fig, axes = plt.subplots(2)
-    sns.distplot(dale_left_exc, ax=axes[0], color='red', kde=False, norm_hist=True, label='Excitatory neurons')
-    sns.distplot(dale_left_inh, ax=axes[0], color='blue', kde=False, norm_hist=True, label='Inhibitory neurons')
-    sns.distplot(dale_right_exc, ax=axes[1], color='red', kde=False, norm_hist=True, label='Excitatory neurons')
-    sns.distplot(dale_right_inh, ax=axes[1], color='blue', kde=False, norm_hist=True, label='Inhibitory neurons')
+    sns.histplot(dale_left_exc, ax=axes[0], color='red', kde=False, label='Excitatory neurons')
+    sns.histplot(dale_left_inh, ax=axes[0], color='blue', kde=False, label='Inhibitory neurons')
+    sns.histplot(dale_right_exc, ax=axes[1], color='red', kde=False, label='Excitatory neurons')
+    sns.histplot(dale_right_inh, ax=axes[1], color='blue', kde=False, label='Inhibitory neurons')
     axes[0].set_xlabel('Coefficient of left singular vector')
     axes[1].set_xlabel('Coefficient of right singular vector')
     axes[0].set_ylabel('Probability density')
@@ -436,13 +442,13 @@ def aggregate_dale():
     axes[0].legend()
     axes[1].legend()
     fig.tight_layout()
-    fig.savefig('out/D2/dale/inhib_frac_0.25/dale_mode_singular_vectors.pdf')
+    fig.savefig('out/D2_dale_mode_singular_vectors.pdf')
 
     fig, axes = plt.subplots(2)
-    sns.distplot(other_left_exc, ax=axes[0], color='red', kde=False, norm_hist=True, label='Excitatory neurons')
-    sns.distplot(other_left_inh, ax=axes[0], color='blue', kde=False, norm_hist=True, label='Inhibitory neurons')
-    sns.distplot(other_right_exc, ax=axes[1], color='red', kde=False, norm_hist=True, label='Excitatory neurons')
-    sns.distplot(other_right_inh, ax=axes[1], color='blue', kde=False, norm_hist=True, label='Inhibitory neurons')
+    sns.histplot(other_left_exc, ax=axes[0], color='red', kde=False, label='Excitatory neurons')
+    sns.histplot(other_left_inh, ax=axes[0], color='blue', kde=False, label='Inhibitory neurons')
+    sns.histplot(other_right_exc, ax=axes[1], color='red', kde=False, label='Excitatory neurons')
+    sns.histplot(other_right_inh, ax=axes[1], color='blue', kde=False, label='Inhibitory neurons')
     axes[1].set_xlabel('Coefficient of right singular vector')
     axes[0].set_xlabel('Coefficient of left singular vector')
     axes[1].set_xlabel('Coefficient of right singular vector')
@@ -451,7 +457,7 @@ def aggregate_dale():
     axes[0].legend()
     axes[1].legend()
     fig.tight_layout()
-    fig.savefig('out/D2/dale/inhib_frac_0.25/other_modes_singular_vectors.pdf')
+    fig.savefig('out/D2_other_modes_singular_vectors.pdf')
 
 def aggregate_sigmas_D3():
     folders = ['out/D3/relu/adam/T_4/', 'out/D3_sigmoid_batch/n_1000_slope_50.0_thresh_0.1_train_bias_False/']
@@ -474,8 +480,6 @@ def aggregate_sigmas_D3():
 
 def aggregate_angles_D2(folder='out/D2/relu/adam/T_10/'):
     n_seeds = 16
-    n = 1000
-    # sigmas = np.zeros((n_seeds, n))
     thetas = []
 
     plt.figure()
@@ -656,26 +660,8 @@ def aggregate_sigmoid_activity_D1(main_folder, n_bins=10, n=1000, n_seeds=8):
 
 
 
-def aggregate_distance_to_manifold():
-    named_folders = {
-    'relu_D1_avg': 'canned_out/D1/relu_avg/adam/',
-    'relu_D2_avg': 'canned_out/D2/relu_avg/',
-    'relu_D1_batch': 'canned_out/D1_relu/sgd/T_3/',
-    'relu_D2_batch': 'canned_out/D2/relu/sgd/T_3/',
-    'relu_D3_batch': 'canned_out/D3/relu/adam/T_4/',
-    'sigmoid_D1_avg': 'canned_out/D1_sigmoid_avg/',
-    'sigmoid_D2_avg': 'canned_out/D2_sigmoid_avg/n_1000_slope_50.0_thresh_0.1_train_bias_False/',
-    'sigmoid_D1_batch': 'canned_out/D1_sigmoid/training_bias_False/decay_0.8/',
-    'sigmoid_D2_batch': 'canned_out/D2_sigmoid_batch/n_1000_slope_50.0_thresh_0.1_train_bias_True/',
-    'sigmoid_D3_batch': 'canned_out/D3_sigmoid_batch/n_1000_slope_50.0_thresh_0.1_train_bias_True/',
-    # 'relu_D3_avg': 'out/D3_relu_avg/n_1024/',
-    'sigmoid_D3_avg': 'out/D3_sigmoid_avg/n_1024/',
-    'relu_D5_avg': 'out/D5_relu_avg/n_1024/',
-    'sigmoid_D5_avg': 'out/D5_sigmoid_avg/n_1024/',
-
-    }
-
-    for name, folder in named_folders.items():
+def aggregate_distance_to_manifold(folders=None):
+    for name, folder in folders.items():
         ratios = []
         if name not in ['relu_D5_avg', 'sigmoid_D5_avg', 'relu_D3_avg', 'sigmoid_D3_avg']:
             n_seeds = 8
@@ -706,7 +692,7 @@ def aggregate_error_n_t():
     all_logs = [.5 * np.log10(data) for data in all_values] #.5 because this is squared error;
     print(all_logs[0], all_logs[-1])
     for idx, n in enumerate(ns):
-        sns.distplot(all_logs[idx], label='n={}'.format(n))
+        sns.histplot(all_logs[idx], label='n={}'.format(n))
     plt.legend()
     plt.savefig(folder+'n_error_study.pdf')
 
@@ -773,5 +759,7 @@ if __name__ == '__main__':
     # aggregate_sigmoid_activity_D1('out/D1_sigmoid_avg/n_1000_slope_50.0_thresh_0.1_train_bias_False/')
     # aggregate_distance_to_manifold()
     # aggregate_error_n_t()
-    aggregate_angles_D2(folder='out/D2_sigmoid_avg/n_1024/')
+    # aggregate_angles_D2(folder='out/D2_sigmoid_avg/n_1024/')
+
+    aggregate_angles_D2(folder='out/D2/relu/adam/T_10/')
     aggregate_angles_D2(folder='out/D2_relu_avg/n_1024/')

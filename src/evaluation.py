@@ -38,8 +38,6 @@ def sanity_check(net, pars, epoch):
     X, y = sample_data(**sanity_sampler_params)
 
     preds = net.integrate(X)
-    # logging.info(len(preds))
-    # logging.info(preds[0].shape)
     if len(preds)>1:
         for traj_index in range(5):
             for c in range(net.n_channels_out):
@@ -76,25 +74,26 @@ def error_realtime(net, pars, epoch):
     X, y = sample_data(**sanity_sampler_params)
     preds = net.integrate(X)
 
-    logging.critical('in error real time, {} {}'.format(X[0].type, X[0].shape))
     tmp_preds = np.array([t.detach().cpu().numpy() for t in preds])
-    tmp_y = np.array([t for t in y])
-    logging.critical('in error real time, tmp variables shape {} {}'.format(tmp_preds.shape, tmp_y.shape))
-    # , tmp_y = np.stack(x)
-    errs = ((tmp_preds-tmp_y)**2).mean(axis=0)
-    logging.critical('in error real time, err shape {}'.format(errs.shape))
+    y = np.array(y)
+    integral_vector_norm = np.sqrt((y**2).sum(axis=0)).mean()
+    logging.info('In error_realtime, computed integral vector norm')
+    errs = np.sqrt(((tmp_preds-y)**2).mean(axis=0))
+    logging.info('In error_realtime, computed error')
+
     os.makedirs(net.save_folder + 'final/error_realtime', exist_ok=True)
     np.savetxt(net.save_folder + 'final/error_realtime/datablob.txt', errs)
 
     plt.figure()
+    plt.xlabel('Timestep in sequence')
+    plt.ylabel('Root Mean Square Error')
+    plt.axhline(y=integral_vector_norm, c='k', ls=':', label=f'Average norm of the current integral vector: {integral_vector_norm:.2f}')
     for i in range(bs):
         plt.scatter(range(T), errs[i], marker='x')
     plt.yscale('log')
+    plt.legend()
     plt.savefig(net.save_folder + 'final/error_realtime/error_realtime_plot.pdf')
     plt.close()
-    # fig.tight_layout()
-    # fig.savefig(net.save_folder + '{}/'.format(epoch) + 'sanity_check.pdf')
-    # plt.close(fig)
 
 # Spectrum of W, as well as some plots on the weights themselves
 def weight_analysis(net, pars, epoch):
@@ -112,7 +111,7 @@ def weight_analysis(net, pars, epoch):
 
     # Total In/Out going weights
     sum_in, sum_out = W.sum(dim=1).cpu().numpy(), W.sum(dim=0).cpu().numpy()
-    fig = sns.jointplot(sum_in, sum_out).set_axis_labels("Sum of incoming weights", "Sum of outgoing weights")
+    fig = sns.jointplot(x=sum_in, y=sum_out).set_axis_labels("Sum of incoming weights", "Sum of outgoing weights")
     fig.savefig(net.save_folder + '{}/'.format(epoch) + 'in_out_jointplot.pdf')
     plt.close()
 
@@ -125,9 +124,7 @@ def weight_analysis(net, pars, epoch):
     fig.savefig(net.save_folder + '{}/'.format(epoch) + 'weights_heatmap.png')
     plt.close(fig)
 
-
     # Histogram of the weights themselves
-
     W_np = W.flatten().detach().cpu().numpy()
     W_nonzero = W_np[np.where(W_np!=0)]
     if W_nonzero is None:
@@ -163,11 +160,13 @@ def weight_analysis(net, pars, epoch):
     plt.close()
 
 
-    # Study of eigenvalues; only really useful for linear networks, in all other cases svd is more relevant
+    # Study of eigenvalues; only really useful for linear networks, 
+    # in all other cases svd is more relevant
     # (in particular for ReLU our optimal solution is not diagonalizable)
     if net.saturations == [-1e8, 1e8] and net.activation_type == 'ReLU':
-        eigs, _ = tch.eig(W, eigenvectors=False)
-        eigs = eigs.detach().cpu().numpy()
+        # eigs, _ = tch.eig(W, eigenvectors=False)
+        eigs = tch.linalg.eigvals(W)
+        eigs = tch.view_as_real(eigs).detach().cpu().numpy()
 
         fig, axes = plt.subplots(1, 2, figsize=(16, 8))
         axes[0].scatter(eigs[:,0], eigs[:,1], marker='x')
@@ -199,7 +198,10 @@ def weight_analysis(net, pars, epoch):
 
         plt.figure()
         plt.hist(sigmas, density=False, log=True, bins=100)
-        plt.title('First (D+1) s.v. : ' + ', '.join(['{:.3}'.format(s) for s in sigmas[:net.n_channels+1]]))
+        if not net.is_dale_constrained:
+            plt.title('First (D+1) s.v. : ' + ', '.join(['{:.3}'.format(s) for s in sigmas[:net.n_channels+1]]))
+        else:
+            plt.title('First (D+2) s.v. : ' + ', '.join(['{:.3}'.format(s) for s in sigmas[:net.n_channels+2]]))
         plt.savefig(net.save_folder + '{}/'.format(epoch) + 'svd_hist_log.pdf')
         plt.close()
 
@@ -315,37 +317,21 @@ def fit_internal_representation(net, pars, epoch):
     # if bs <= 256:
     X, y = sample_data(**big_test_sampler_params)
     preds, actual_currents = net.integrate(X, keep_currents=True)
-    # print(preds[0].shape, actual_currents.shape)
     del X
-    # else:
-    #     preds = [tch.zeros(bs, T).float() for _ in range(net.n_channels)]
-    #     actual_currents = tch.zeros(bs, T, net.n).float()
-    #
-    #     # X = [np.zeros((bs, T)).astype(np.float32) for _ in range(net.n_channels)]
-    #     y = [np.zeros((bs, T)).astype(np.float32) for _ in range(net.n_channels)]
-    #     for i in range(bs//256):
-    #         X_tmp, y_tmp = sample_data(**big_test_sampler_params)
-    #         preds_tmp, curs_tmp = net.integrate(X_tmp, keep_currents=True)
-    #         actual_currents[i*256:(i+1)*256] = curs_tmp
-    #
-    #         for c in range(net.n_channels):
-    #             preds[c][i*256:(i+1)*256] = preds_tmp[c]
-    #
-    #             # X[c][i*256:(i+1)*256] = X_tmp[c]
-    #             y[c][i*256:(i+1)*256] = y_tmp[c]
-
-
-
 
     W = net.W.detach()
     if net.is_dale_constrained:
         W = net.W.mm(tch.diag(net.synapse_signs)).detach()
 
     U, _, _ = tch.svd(W, compute_uv=True)
-    if not net.is_dale_constrained:
-        lefts = U[:, :net.n_channels]
-    else:
-        lefts = U[:, :net.n_channels+1] #  think one additional singular value is used for balance on top of the "computational" ones
+
+    n_modes = net.n_channels
+    # For dale, one "structural" singular value on top of the D "computational" ones
+    if net.is_dale_constrained:
+        n_modes = net.n_channels + 1
+
+    lefts = U[:, :n_modes]
+
     del U
 
     actual_currents = actual_currents.reshape((-1, net.n)).transpose(0,1)
@@ -410,7 +396,10 @@ def fit_internal_representation(net, pars, epoch):
         axes[0].scatter(y[0].flatten(), y[1].flatten(), c=seismic(norm(a.flatten())), s=4, rasterized=True)
         axes[0].set_xlabel(r'Value of $y_1$')
         axes[0].set_ylabel(r'Value of $y_2$')
-        axes[0].set_title('Value of a')
+        y = np.array(y)
+        axes[0].set_xlim(y[0].min(), y[0].max())
+        axes[0].set_xlim(y[1].min(), y[1].max())
+        axes[0].set_title('Value of $\\alpha$ (manifold coordinate)')
         divider = make_axes_locatable(axes[0])
         ax_cb = divider.new_horizontal(size="5%", pad=0.05)
         cb1 = matplotlib.colorbar.ColorbarBase(ax_cb, cmap=seismic, norm=norm, orientation='vertical')
@@ -421,7 +410,9 @@ def fit_internal_representation(net, pars, epoch):
         axes[1].scatter(y[0].flatten(), y[1].flatten(), c=seismic(norm(b.flatten())), s=4, rasterized=True)
         axes[1].set_xlabel(r'Value of $y_1$')
         axes[1].set_ylabel(r'Value of $y_2$')
-        axes[1].set_title('Value of b')
+        axes[1].set_title('Value of $\\beta$ (manifold coordinate)')
+        axes[1].set_xlim(y[0].min(), y[0].max())
+        axes[1].set_xlim(y[1].min(), y[1].max())
         divider = make_axes_locatable(axes[1])
         ax_cb = divider.new_horizontal(size="5%", pad=0.05)
         cb1 = matplotlib.colorbar.ColorbarBase(ax_cb, cmap=seismic, norm=norm, orientation='vertical')
@@ -503,14 +494,12 @@ def fit_internal_representation(net, pars, epoch):
         if bs <= 256:
             X, y = sample_data(**big_test_sampler_params)
             preds, actual_currents = net.integrate(X, keep_currents=True)
-            # print(preds[0].shape, actual_currents.shape)
             del X
         else:
             big_test_sampler_params.update({'batch_size': 256})
             preds = [tch.zeros(bs, T).float() for _ in range(net.n_channels)]
             actual_currents = tch.zeros(bs, T, net.n).float()
 
-            # X = [np.zeros((bs, T)).astype(np.float32) for _ in range(net.n_channels)]
             y = [np.zeros((bs, T)).astype(np.float32) for _ in range(net.n_channels)]
             for i in range(bs//256):
                 X_tmp, y_tmp = sample_data(**big_test_sampler_params)
@@ -519,11 +508,8 @@ def fit_internal_representation(net, pars, epoch):
 
                 for c in range(net.n_channels):
                     preds[c][i*256:(i+1)*256] = preds_tmp[c]
-
-                    # X[c][i*256:(i+1)*256] = X_tmp[c]
                     y[c][i*256:(i+1)*256] = y_tmp[c]
 
-        # activation = lambda x: tch.clamp(x, *net.saturations)
         activation = net.activation_function
         actual_currents = actual_currents.reshape((-1, net.n)).transpose(0,1)
         real_activities = activation(actual_currents.to(net.device).transpose(0,1)).transpose(0,1).detach().cpu().numpy()
@@ -571,14 +557,12 @@ def fit_internal_representation(net, pars, epoch):
         if bs <= 256:
             X, y = sample_data(**big_test_sampler_params)
             preds, actual_currents = net.integrate(X, keep_currents=True)
-            # print(preds[0].shape, actual_currents.shape)
             del X
         else:
             big_test_sampler_params.update({'batch_size': 256})
             preds = [tch.zeros(bs, T).float() for _ in range(net.n_channels)]
             actual_currents = tch.zeros(bs, T, net.n).float()
 
-            # X = [np.zeros((bs, T)).astype(np.float32) for _ in range(net.n_channels)]
             y = [np.zeros((bs, T)).astype(np.float32) for _ in range(net.n_channels)]
             for i in range(bs//256):
                 X_tmp, y_tmp = sample_data(**big_test_sampler_params)
@@ -753,49 +737,21 @@ def relu_D1_currents(net, pars, epoch):
     preds, actual_currents = net.integrate(X, keep_currents=True)
     del X
     y = y[0]
-    # activation = lambda x: tch.clamp(x, *net.saturations)
     activation = net.activation_function
     states = activation(actual_currents).detach().cpu().numpy()
 
     l = net.W.matmul(net.encoders[0]).detach()
 
-    # if net.is_dale_constrained:
-    #     W = net.W.mm(tch.diag(net.synapse_signs)).detach()
-    #     U, sigmas, V = tch.svd(W.detach(), compute_uv=True)
-    #     l = U[:, 1]
-    #     r = V[:, 1]
-    # else:
-    #     U, sigmas, V = tch.svd(W.detach(), compute_uv=True)
-    #     l = U[:, 0]
-    #     r = V[:, 0]
-    # del U, V, sigmas
-
     actual_currents = actual_currents.reshape((-1, net.n)).transpose(0,1)
-    # print(l.shape, actual_currents.shape)
     coordinates = utils.lstsq(l.unsqueeze(1), actual_currents)[0] #(D, bs *T)
-    # print(coordinates.shape)
     predicted_currents = l.unsqueeze(1).matmul(coordinates)
-    # print(predicted_currents, actual_currents)
 
     plt.figure()
     y_ = y.flatten()
     coordinates = coordinates.flatten()
-    # reorder = np.argsort(y)
-    # y_, states_= y_[reorder], states_[reorder]
     plt.scatter(actual_currents.detach().cpu().numpy(), predicted_currents.detach().cpu().numpy(), rasterized=True, s=1)
-    # a, b = linregress(states)
     plt.savefig(net.save_folder + '{}'.format(epoch) + '/current_fit_validity.pdf')
     plt.close()
-
-    # plt.figure()
-    # y_ = y.flatten()
-    # coordinates = coordinates.flatten()
-    # # reorder = np.argsort(y)
-    # # y_, states_= y_[reorder], states_[reorder]
-    # sns.kdeplot(actual_currents.detach().cpu().numpy(), predicted_currents.detach().cpu().numpy())
-    # # a, b = linregress(states)
-    # plt.savefig(net.save_folder + '{}'.format(epoch) + '/current_fit_validity_kde.pdf')
-    # plt.close()
 
     del predicted_currents
 
@@ -803,12 +759,7 @@ def relu_D1_currents(net, pars, epoch):
     plt.figure()
     y_ = y.flatten()
     coordinates = coordinates.flatten()
-    # reorder = np.argsort(y)
-    # y_, states_= y_[reorder], states_[reorder]
-    # plt.scatter(y_, coordinates.detach().cpu().numpy(), rasterized=True)
     plt.scatter(preds[0].detach().cpu().numpy().flatten(), coordinates.detach().cpu().numpy(), rasterized=True)
-    # a, b = linregress(states)
-    # slope, intercept, r_value, p_value, std_err = stats.linregress(y_, coordinates.detach().cpu().numpy())
     slope, intercept, r_value, p_value, std_err = stats.linregress(preds[0].detach().cpu().numpy().flatten(), coordinates.detach().cpu().numpy())
     plt.plot(y_, slope*y_+intercept, c='k', ls='--')
     plt.savefig(net.save_folder + '{}'.format(epoch) + '/1D_manifold_position.pdf')
@@ -910,7 +861,7 @@ def relu_D1_currents(net, pars, epoch):
         nu_balance_p = s_balance.detach().cpu().numpy() * l_balance.detach().cpu().numpy() *  r_balance.dot(l*(l>0).float()).detach().cpu().numpy()
         nu_balance_m = s_balance.detach().cpu().numpy() * l_balance.detach().cpu().numpy() *  r_balance.dot(-l*(-l>0).float()).detach().cpu().numpy()
 
-        fig = sns.jointplot(nu_balance_p, nu_balance_m, kind='reg', scatter = False ).set_axis_labels(r"Balance from positive", r"Balance from negative")
+        fig = sns.jointplot(x=nu_balance_p, y=nu_balance_m, kind='reg', scatter = False ).set_axis_labels(r"Balance from positive", r"Balance from negative")
         fig.ax_joint.scatter(nu_balance_p, nu_balance_m)
         fig.ax_joint.axvline(x=0, c='k', ls=':')
         fig.ax_joint.axhline(y=0, c='k', ls=':')
@@ -927,14 +878,14 @@ def relu_D1_currents(net, pars, epoch):
     nu_p = W.matmul(W.matmul(net.encoders[0])*(W.matmul(net.encoders[0])>0).float()).detach().cpu().numpy() / (scales[0] * decays[0])
     nu_m = W.matmul(-W.matmul(net.encoders[0])*(W.matmul(net.encoders[0])<0).float()).detach().cpu().numpy() / (scales[0] * decays[0])
 
-    fig = sns.jointplot(nu_p, nu_m, kind='reg', scatter = False ).set_axis_labels(r"Current from +", r"Current from -")
+    fig = sns.jointplot(x=nu_p, y=nu_m, kind='reg', scatter = False ).set_axis_labels(r"Current from +", r"Current from -")
     fig.ax_joint.scatter(nu_p, nu_m, c=neuron_colors)
     fig.ax_joint.axvline(x=0, c='k', ls=':')
     fig.ax_joint.axhline(y=0, c='k', ls=':')
     fig.savefig(net.save_folder + 'final/currents_plots/nu_p_VS_nu_m.pdf')
     plt.close()
 
-    fig = sns.jointplot(nu_e, nu_p, kind='reg', scatter = False ).set_axis_labels(r"Current from encoder", r"Current from +")
+    fig = sns.jointplot(x=nu_e, y=nu_p, kind='reg', scatter = False ).set_axis_labels(r"Current from encoder", r"Current from +")
     fig.ax_joint.scatter(nu_e, nu_p, c=neuron_colors)
     fig.ax_joint.axvline(x=0, c='k', ls=':')
     fig.ax_joint.axhline(y=0, c='k', ls=':')

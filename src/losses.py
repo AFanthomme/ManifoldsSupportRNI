@@ -104,6 +104,11 @@ def average_loss_D2(net, **sampler_params):
     decay1, decay2 = sampler_params['decays']
     s1, s2 = sampler_params['scales']
 
+    if 'avg_loss_range' in sampler_params.keys():
+        R = sampler_params['avg_loss_range']
+    else:
+        R = 10
+
     if net.is_W_parametrized:
         W = net.W
     elif net.is_2_2_parametrized:
@@ -118,12 +123,9 @@ def average_loss_D2(net, **sampler_params):
 
     # Same loss no matter what
     activation = net.activation_function
-    range = (-5., 5.) # This is for our decay=.8 test, I think it will be enough
     W_e1 = W.matmul(net.encoders[0]).view(1, -1)
     W_e2 = W.matmul(net.encoders[1]).view(1, -1)
-    alphas = tch.zeros(4096,2).uniform_(*range).to(net.device)
-    # logging.critical('{}  {}  {}'.format((W_e**2).mean(), (alphas**2).mean(), (alphas.matmul(W_e)**2).mean()))
-
+    alphas = tch.zeros(4096,2).uniform_(-R, R).to(net.device)
     curs = alphas[:,0].unsqueeze(1).matmul(W_e1) + alphas[:,1].unsqueeze(1).matmul(W_e2)
     dots1 = activation(curs).matmul(net.decoders[0])
     dots2 = activation(curs).matmul(net.decoders[1])
@@ -132,8 +134,6 @@ def average_loss_D2(net, **sampler_params):
 
     new_curs = activation(curs).matmul(W.t())
     new_curs_expected = decay1 * alphas[:,0].unsqueeze(1).matmul(W_e1) + decay2 * alphas[:,1].unsqueeze(1).matmul(W_e2)
-    # logging.critical('{}  {}  {}  {}'.format(dots.shape,dots_expected.shape, new_states.shape, new_states_expected.shape))
-
     loss = 0
     loss = loss + ((dots1 - dots1_expected)**2).mean()
     loss = loss + ((dots2 - dots2_expected)**2).mean()
@@ -158,35 +158,33 @@ def average_loss_generic(net, **sampler_params):
         assert (net.W>=0).all()
         W = net.W.matmul(tch.diag(net.synapse_signs))
 
+    if 'avg_loss_range' in sampler_params.keys():
+        R = sampler_params['avg_loss_range']
+    else:
+        R = 10
+
     # Same loss no matter what
     activation = net.activation_function
-    z_range = (-5.1, 5.1)
     Wes = [W.matmul(e).view(1, -1) for e in net.encoders]
 
-    alphas = tch.zeros(sampler_params['batch_size'],d).uniform_(*z_range).to(net.device)
-    # logging.critical('{}  {}  {}'.format((W_e**2).mean(), (alphas**2).mean(), (alphas.matmul(W_e)**2).mean()))
-
+    alphas = tch.zeros(sampler_params['batch_size'],d).uniform_(-R, R).to(net.device)
 
     curs = alphas[:,0].unsqueeze(1).matmul(Wes[0])
     for i in range(1, d):
         curs = curs + alphas[:,i].unsqueeze(1).matmul(Wes[i])
 
     dots = [activation(curs).matmul(d) for d in net.decoders]
-    # dots2 = activation(curs).matmul(net.decoders[1])
     dots_expected = [scales[i]*decays[i]*alphas[:,i] for i in range(d)]
-    # dots2_expected = s2*decay2*alphas[:,1]
 
     new_curs = activation(curs).matmul(W.t())
     new_curs_expected = decays[0] * alphas[:,0].unsqueeze(1).matmul(Wes[0])
     for i in range(1, d):
         new_curs_expected = new_curs_expected + decays[i] * alphas[:,i].unsqueeze(1).matmul(Wes[i])
-    # logging.critical('{}  {}  {}  {}'.format(dots.shape,dots_expected.shape, new_states.shape, new_states_expected.shape))
 
     loss = 0
     for i in range(d):
         loss = loss + ((dots[i] - dots_expected[i])**2).mean()
 
-    # logging.critical('Dots loss {}, curs loss {}'.format(loss.item(),  ((new_curs - new_curs_expected)**2).mean()))
     loss = loss + ((new_curs - new_curs_expected)**2).mean()
 
     return loss

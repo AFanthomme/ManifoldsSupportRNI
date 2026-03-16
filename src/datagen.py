@@ -56,7 +56,7 @@ class TestSequencesPrecomputer:
             out = np.zeros((bs, self.epoch_length), dtype=np.float32)
             for idx in range(bs):
                 out[idx] = self._full_profile()
-            np.save('precomputed/test_sequences/batch_{}.npy'.format(traj_idx), out)
+            np.save('out/precomputed_test_sequences/batch_{}.npy'.format(traj_idx), out)
 
 
 def simple_decay(data, decay):
@@ -105,7 +105,7 @@ def sample_data(n_channels=1, epoch_length=1000, decays=[.995], scales=[1.], bat
             logging.error('sample_data expects batch_size<256 in test mode, not {}'.format(batch_size))
             raise RuntimeError
 
-        X = [np.load('precomputed/test_sequences/batch_{}.npy'.format(c)).astype(np.float32)[:batch_size, :epoch_length] for c in range(n_channels)]
+        X = [np.load('out/precomputed_test_sequences/batch_{}.npy'.format(c)).astype(np.float32)[:batch_size, :epoch_length] for c in range(n_channels)]
         for x_ in X:
             np.random.shuffle(x_)
 

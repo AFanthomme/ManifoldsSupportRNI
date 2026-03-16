@@ -20,13 +20,14 @@ many_channels_params = {
     'n_channels': 2,
     'saturations': [0, 1e8],                # This is ReLU; linear is [-1e8, 1e8], Relu4 [0,4]
     'init_radius': 0.,                      # Null initialization
-    'save_folder': 'unittests/many_channels_test/',
+    'save_folder': 'out/setup_tests/',
     # This is for n_channels (= D) > 1
     'init_vectors_type': 'random',          # 'random' is just normed gaussian; 'orthonormal' is with Gram-Schmidt
 
     # Those ones are only read if D = 1
     'init_vectors_overlap': None,           # Force macroscopic alignment between e and d
     'init_vectors_scales': [1,1],           # Independantly rescale them [d_scale, e_scale]
+    'activation_type': 'ReLU',
 }
 
 
@@ -79,14 +80,16 @@ class ManyChannelsIntegrator(Module):
                 self.decoders[c].data[delimiters[c]:delimiters[c+1]] = tch.zeros(self.n_per_channel).normal_(0, 1./sqrt(self.n_per_channel))
         elif self.init_vectors_type == 'support_same_with_overlap':
             assert self.n_channels == 2
+            n_a = int(.6*self.n)
+            
             self.encoders[0].data = tch.zeros(self.n)
-            self.encoders[0].data[:int(.6*self.n)] = tch.zeros(int(.6*self.n)).normal_(0, 1./sqrt(int(.6*self.n)))
+            self.encoders[0].data[:n_a] = tch.zeros(n_a).normal_(0, 1./sqrt(n_a))
             self.decoders[0].data = tch.zeros(self.n)
-            self.decoders[0].data[:int(.6*self.n)] = tch.zeros(int(.6*self.n)).normal_(0, 1./sqrt(int(.6*self.n)))
+            self.decoders[0].data[:n_a] = tch.zeros(n_a).normal_(0, 1./sqrt(n_a))
             self.encoders[1].data = tch.zeros(self.n)
-            self.encoders[1].data[int(.4*self.n):] = tch.zeros(int(.6*self.n)).normal_(0, 1./sqrt(int(.6*self.n)))
+            self.encoders[1].data[-n_a:] = tch.zeros(n_a).normal_(0, 1./sqrt(n_a))
             self.decoders[1].data = tch.zeros(self.n)
-            self.decoders[1].data[int(.4*self.n):] = tch.zeros(int(.6*self.n)).normal_(0, 1./sqrt(int(.6*self.n)))
+            self.decoders[1].data[-n_a:] = tch.zeros(n_a).normal_(0, 1./sqrt(n_a))
         elif self.init_vectors_type == 'support_disjoint':
             self.n_per_channel = self.n // self.n_channels
             delimiters = [c * self.n_per_channel for c in range(self.n_channels)] + [self.n]
@@ -127,7 +130,11 @@ class ManyChannelsIntegrator(Module):
                 pass
 
         self.W = Parameter(tch.zeros(self.n, self.n).normal_(0, std), requires_grad=True)
-        eigs, _ = tch.eig(self.W, eigenvectors=False)
+        # Depreacted in pytorch 1.9, and now removed
+        # eigs, _ = tch.eig(self.W, eigenvectors=False)
+        # now eig returns a complex tensor rather than its real representation, so use the associated util
+        eigs = tch.view_as_real(tch.linalg.eigvals(self.W))
+
         spectral_rad = tch.sqrt((eigs**2).sum(dim=1).max()).item()
         assert spectral_rad != 0
         self.W.data = self.init_radius * self.W.data / spectral_rad
@@ -149,9 +156,9 @@ class ManyChannelsIntegrator(Module):
             tmp = tch.clamp(x, *self.saturations)
         elif self.activation_type == 'Sigmoid':
             shape_bkp = x.shape
-            # logging.info(x.shape)
-            # logging.info(x.shape)
-            tmp =  tch.sigmoid(self.sigmoid_slope*(x.view(-1, self.n)-self.thresholds.view(1, self.n)))
+            # tmp = 100*tch.sigmoid(self.sigmoid_slope*(x.view(-1, self.n)-self.thresholds.view(1, self.n)))
+            tmp = tch.tanh(self.sigmoid_slope*(x.view(-1, self.n)-self.thresholds.view(1, self.n)))
+            # tmp = tch.sigmoid(self.sigmoid_slope*(x.view(-1, self.n)-self.thresholds.view(1, self.n)))
 
         return tmp.view(shape_bkp)
 
@@ -401,7 +408,6 @@ class DaleConstrainedIntegrator(Module):
 
 
 
-
         self.encoders = ParameterList([Parameter(tch.zeros(self.n).normal_(0, std), requires_grad=False) for _ in range(self.n_channels)])
         self.decoders = ParameterList([Parameter(tch.zeros(self.n).normal_(0, std), requires_grad=False) for _ in range(self.n_channels)])
         if self.init_vectors_type == 'random':
@@ -429,13 +435,15 @@ class DaleConstrainedIntegrator(Module):
             self.decoders[0].data = self.init_vectors_scales[0] * self.decoders[0].data / tch.sqrt((self.decoders[0].data**2).sum())
             self.encoders[0].data = self.encoders[0].data * self.init_vectors_scales[1]
 
-
+        self.n_channels_in = self.n_channels
+        self.n_channels_out = self.n_channels
 
         self.n_inhib = int(self.n * self.inhib_proportion)
         self.n_excit = self.n - self.n_inhib
         self.synapse_signs = Parameter(tch.Tensor([1. for _ in range(self.n_excit)] + [-1. for _ in range(self.n_inhib)]), requires_grad=False).float()
         self.W = Parameter(tch.zeros(self.n, self.n).normal_(0, std), requires_grad=True)
-        eigs, _ = tch.eig(self.W, eigenvectors=False)
+        # eigs, _ = tch.eig(self.W, eigenvectors=False)
+        eigs = tch.view_as_real(tch.linalg.eigvals(self.W))
         spectral_rad = tch.sqrt((eigs**2).sum(dim=1).max()).item()
         assert spectral_rad != 0
         self.W.data = self.init_radius * self.W.data / spectral_rad
@@ -446,6 +454,14 @@ class DaleConstrainedIntegrator(Module):
         self.device = tch.device(self.device_name)
         self.to(self.device)
         os.makedirs(self.save_folder, exist_ok=True)
+
+    def activation_function(self, x):
+        if self.activation_type == 'ReLU':
+            return tch.clamp(x, *self.saturations)
+        elif self.activation_type == 'Sigmoid':
+            shape_bkp = x.shape
+            tmp =  tch.sigmoid(self.sigmoid_slope*(x.view(-1, self.n)-self.thresholds.view(1, self.n)))
+            return tmp.view(shape_bkp)
 
     def step(self, state, inputs, mask, keep_currents=False):
         external_current = self.encoders[0] * inputs[0].view(-1, 1)
@@ -526,7 +542,7 @@ class ManyChannelsIntegratorNonLinearDecoder(Module):
         for k, v in args_dict.items():
              setattr(self, k, v)
         if len(self.saturations) > 2:
-            logging.error('ManyChannelsIntegrator.saturations should be [low, high], not {}'.format(saturations))
+            logging.error('ManyChannelsIntegrator.saturations should be [low, high], not {}'.format(self.saturations))
         std = 1./sqrt(self.n)
 
 

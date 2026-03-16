@@ -12,13 +12,17 @@ def orth(A, rcond=None):
     if len(A.shape) != 2:
         logging.error('Expected input to orth be a matrix, not {}d tensor'.format(len(A.shape)))
         raise RuntimeError
-    u, s, v = tch.svd(A, some=True)
-    v.transpose_(0,1)
-    M, N = u.shape[0], v.shape[1]
+    
+    # These have been deprecated
+    # u, s, v = tch.svd(A, some=True)
+    # v.transpose_(0,1)
+    u, s, Vh = tch.linalg.svd(A, full_matrices=False) 
+
+    M, N = u.shape[0], Vh.shape[1]
     if rcond is None:
         rcond = tch.finfo(s.dtype).eps * max(M, N)
     tol = s.max() * rcond
-    num = tch.sum(s > tol)
+    num = int(tch.sum(s > tol).item())
     Q = u[:, :num]
     return Q
 
@@ -36,7 +40,11 @@ def sqrtm(A):
         logging.error('Expected input to sqrtm to be symmetric')
         raise RuntimeError
 
-    e, V = tch.symeig(A, eigenvectors=True)
+    # Depreacted in pytorch 1.9, and now removed
+    # e, V = tch.symeig(A, eigenvectors=True)
+
+    # Since A is symmetric, no issue with the change from Upper to Lower in 1.9
+    e, V = tch.linalg.eigh(A)
 
     if not (e>=0).all():
         logging.error('Calling sqrtm on a matrix with negative eigenvalues, min eig {}'.format(e.min()))

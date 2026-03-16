@@ -9,7 +9,6 @@ import matplotlib.pyplot as plt
 from copy import deepcopy
 from datagen import simple_decay, sample_data
 
-
 logging.basicConfig(level=logging.INFO)
 
 # Check our implementation of scipy.linalg.orth in torch
@@ -17,24 +16,35 @@ def test_orth_torch():
     import utils
     from scipy.linalg import orth
 
+    # SVD is not unique : if a pair of singular vectors has their sign flipped, the product is unchanged ! 
+    # Therefore, to ensure unicity, we flip so the largest magnitude element is positive
+    def standardize_svd_signs(Q):
+        idx = np.argmax(np.abs(Q), axis=0) 
+        sgn = np.sign(Q[idx, np.arange(Q.shape[1])])
+        sgn[sgn == 0] = 1.0
+        return Q * sgn
+
     dists_sci_cpu = []
     dists_sci_gpu = []
     for _ in range(5):
         A = np.random.randn(100, 100)
         orth_A_sci = orth(A)
         orth_A_tch = utils.orth(tch.from_numpy(A)).numpy()
-        orth_A_tch_gpu = utils.orth(tch.from_numpy(A).to(tch.device('cuda'))).cpu().numpy()
+        tmp = tch.from_numpy(A).to(tch.device('cuda'))
+        orth_A_tch_gpu = utils.orth(tmp).cpu().numpy()
+        orth_A_sci = standardize_svd_signs(orth_A_sci)
+        orth_A_tch = standardize_svd_signs(orth_A_tch)
+        orth_A_tch_gpu = standardize_svd_signs(orth_A_tch_gpu)
         dists_sci_cpu.append(np.abs(orth_A_sci-orth_A_tch).max())
         dists_sci_gpu.append(np.abs(orth_A_sci-orth_A_tch_gpu).max())
 
-    assert np.max(dists_sci_cpu) < 2*tch.finfo(tch.float32).eps
-    assert np.max(dists_sci_gpu) < 2*tch.finfo(tch.float32).eps
+    assert np.max(dists_sci_cpu) < 2*tch.finfo(tch.float32).eps, f"Found max distance {np.max(dists_sci_cpu)}"
+    assert np.max(dists_sci_gpu) < 2*tch.finfo(tch.float32).eps, f"Found max distance {np.max(dists_sci_gpu)}"
 
     dists_sci_cpu = ['{:.2e}'.format(d) for d in dists_sci_cpu]
     dists_sci_gpu = ['{:.2e}'.format(d) for d in dists_sci_gpu]
     logging.info('Distances between scipy and torch cpu implementation of orth : {}'.format(dists_sci_cpu))
     logging.info('Distances between scipy and torch gpu implementation of orth: {}'.format(dists_sci_gpu))
-
 
     try:
         utils.orth(tch.from_numpy(np.random.randn(4, 5, 6))).numpy()
@@ -93,32 +103,11 @@ def test_sqrtm_torch():
     except RuntimeError:
         logging.info('sqrtm failed as expected for non PD inputs')
 
-# Print the first test trajectories
-def plot_test_sequences():
-    from datagen import simple_decay
-    trajs = np.load('precomputed/test_sequences/batch_0.npy')
-    targets = simple_decay(trajs, 0.995)
-    os.makedirs('unittests/datagen/precomputed', exist_ok=True)
-    for traj_idx in range(5):
-        fig, ax = plt.subplots()
-        ax.plot(trajs[traj_idx], c='b')
-        ax.set_ylabel('Inputs')
-        twin_ax = ax.twinx()
-        twin_ax.plot(targets[traj_idx], c='r')
-        twin_ax.set_ylabel('Targets')
-        ax.set_xlabel('Time')
-        fig.savefig('unittests/datagen/precomputed/traj_{}.pdf'.format(traj_idx))
-
-    # Check that indeed simple_decay fails when called on non-batched sequences
-    try:
-        simple_decay(trajs[0], .995)
-    except RuntimeError:
-        logging.info('simple_decay failed as expected for non-batched inputs')
 
 # Check both train and test mode of data sampler
 def test_data_sampler():
     from datagen import sample_data
-    os.makedirs('unittests/datagen/sampler', exist_ok=True)
+    os.makedirs('out/data_visualization/', exist_ok=True)
     decays = [.97, .99, .99]
     scales = [1., 1., .2]
     n_channels = 3
@@ -134,7 +123,17 @@ def test_data_sampler():
             twin_ax.plot(y[c][traj_idx], c='r')
             twin_ax.set_ylabel('Targets (channel {})'.format(c+1))
             ax.set_xlabel('Time')
-        fig.savefig('unittests/datagen/sampler/train_traj_{}.pdf'.format(traj_idx))
+        fig.savefig('out/data_visualization/train_traj_{}.pdf'.format(traj_idx))
+
+        fig, ax = plt.subplots()
+        ax.scatter(range(len(X[0][traj_idx])), X[c][traj_idx], c='b')
+        ax.set_ylabel('Inputs')
+        twin_ax = ax.twinx()
+        twin_ax.plot(y[c][traj_idx], c='r')
+        twin_ax.set_ylabel('Targets')
+        ax.set_xlabel('Time')
+        fig.savefig('out/data_visualization/train_traj_{}_channel0_only.png'.format(traj_idx), dpi=600)
+
 
     X, y = sample_data(n_channels=n_channels, decays=decays, scales=scales, epoch_length=500, mode='test')
     for traj_idx in range(5):
@@ -147,7 +146,17 @@ def test_data_sampler():
             twin_ax.plot(y[c][traj_idx], c='r')
             twin_ax.set_ylabel('Targets (channel {})'.format(c+1))
             ax.set_xlabel('Time')
-        fig.savefig('unittests/datagen/sampler/test_traj_{}.pdf'.format(traj_idx))
+
+        fig.savefig('out/data_visualization/test_traj_{}.pdf'.format(traj_idx))
+
+        fig, ax = plt.subplots()
+        ax.scatter(range(len(X[0][traj_idx])), X[c][traj_idx], c='b')
+        ax.set_ylabel('Inputs')
+        twin_ax = ax.twinx()
+        twin_ax.plot(y[c][traj_idx], c='r')
+        twin_ax.set_ylabel('Targets')
+        ax.set_xlabel('Time')
+        fig.savefig('out/data_visualization/test_traj_{}_channel0_only.png'.format(traj_idx), dpi=600)
 
     try:
         sample_data(n_channels=n_channels, decays=decays, scales=scales, epoch_length=1500, mode='test')
@@ -187,6 +196,8 @@ def test_many_channels_net():
         assert (out[c]==out_masked[c]).all()
     logging.info('net.integrate gave the same result with all optional keyword arguments')
 
+
+    X, _ = sample_data(n_channels=2, decays=[.97, .99], scales=[1., 1.], epoch_length=500, mode='train')
     bad_X = np.array(X)
     try:
         net.integrate(bad_X)

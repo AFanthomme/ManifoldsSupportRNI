@@ -1,5 +1,6 @@
 import torch as tch
 from torch.optim import Adam, SGD
+from torch.optim.lr_scheduler import MultiStepLR
 from copy import deepcopy
 import numpy as np
 from math import sqrt
@@ -15,7 +16,7 @@ import matplotlib.pyplot as plt
 from losses import batch_loss, average_loss_D1, switch_loss, average_loss_D2, average_loss_generic, average_loss_generic_non_linear_decoder
 from nets import ManyChannelsIntegrator, many_channels_params, TwoTwoNet, DaleConstrainedIntegrator, ManyChannelsIntegratorNonLinearDecoder
 from datagen import sample_data, sampler_params
-from tests import tests_register
+from evaluation import tests_register
 
 train_params = {
     'loss_name': 'batch',
@@ -56,9 +57,6 @@ def main(full_params, seed):
 
     # be careful, this works but relies on mutability of dicts, should instead call init(net_params) !!
     if full_params['net_type'] == 'many_channels':
-        # print('Just before calling init', list(net_params.items()))
-        # print('Just before calling init', full_params['net_params']['init_vector_scales'])
-        # net = ManyChannelsIntegrator(full_params['net_params'])
         net = ManyChannelsIntegrator(net_params)
     elif full_params['net_type'] == 'TwoTwoNet':
         net = TwoTwoNet(full_params['net_params'])
@@ -74,10 +72,6 @@ def main(full_params, seed):
 
     if not full_params['net_type'] == 'NonLinearDecoder':
         if train_params['train_ed']:
-            # print('encoders max', net.encoders[0].abs().max().item())
-            # print('decoders max', net.decoders[0].abs().max().item())
-            # print('w max', net.W.abs().max().item())
-
             for c in range(net.n_channels):
                 net.decoders[c].requires_grad =  True
                 net.encoders[c].requires_grad =  True
@@ -91,10 +85,6 @@ def main(full_params, seed):
                 net.decoders[c].requires_grad =  True
             decoders_start_normed = [d/np.sqrt(d.dot(d).item()) for d in net.decoders]
             encoders_normed = [e/np.sqrt(e.dot(e).item()) for e in net.encoders]
-            # This is garbage, just use d_scale
-            # if train_params['d_init'] == 'small':
-            #     for c in range(net.n_channels):
-            #         net.decoders[c] *= 1e-2
 
         # These are useful mostly for single channel networks, but they could be used someday
         # Need to be done after drawing encoders/decoders so cannot be put in params directly.
@@ -117,6 +107,7 @@ def main(full_params, seed):
         test_params['decays'] = sampler_params['decays']
 
 
+
     if train_params['loss_name'] == 'batch':
         loss_function = batch_loss
     elif train_params['loss_name'] == 'switch_loss':
@@ -132,6 +123,7 @@ def main(full_params, seed):
             logging.error('Average loss D2 only allowed for bi-channel case')
             raise RuntimeError
         else:
+
             loss_function = average_loss_D2
     elif train_params['loss_name'] == 'avg_generic':
         loss_function = average_loss_generic
@@ -149,26 +141,17 @@ def main(full_params, seed):
         logging.error('Only sgd and adam optimizers are implemented, not {}'.format(train_params['optimizer_name']))
         raise RuntimeError
 
-    # logging.error('hello')
-    # for name, param in net.named_parameters():
-    #     logging.error(name)
-    #     logging.error(param.requires_grad)
-    #
-    # for param in net.parameters():
-    #     logging.error('data shape {}, requires_grad {}'.format(param.data.shape, param.requires_grad))
-
     logging.info('The optimizer is working on the following (1000,1000) is W, 1000 is d or e :')
     for p in optimizer.param_groups:
         outputs = ''
         for k, v in p.items():
-            if k is 'params':
+            if k == 'params':
                 outputs += (k + ': ')
                 for vp in v:
                     outputs += (str(vp.shape).ljust(30) + ' ')
             else:
                 outputs += (k + ': ' + str(v).ljust(10) + ' ')
         logging.info(outputs)
-    # logging.error(optimizer.param_groups)
 
     # Not very elegant but it does the trick
     def do_tests(net, epoch):
@@ -190,7 +173,8 @@ def main(full_params, seed):
                     pass
                 tests_register[test_name](net, test_params, epoch)
                 print('Done running test {}'.format(test_name))
-
+        # print(f'exiting test suite for epoch {epoch}')
+        
     # Keep the best candidate on cpu to limit gpu memory usage
     saved_net = deepcopy(net).cpu()
     saved_loss = 1e8
@@ -213,17 +197,18 @@ def main(full_params, seed):
             e_scales = np.zeros((net.n_channels, n_epochs))
             e_e0_normalized = np.zeros((net.n_channels, n_epochs))
 
-
     for epoch in range(n_epochs):
         loss = loss_function(net, **sampler_params) # Loss functions only use parameters related to data
+
         optimizer.zero_grad()
         loss.backward()
+        if train_params['normalize_grad']:
+            tch.nn.utils.clip_grad_norm(filter(lambda p: p.requires_grad, net.parameters()), .05)
         optimizer.step()
         if full_params['net_type'] == 'DaleNet':
             net.W.data.clamp_(0)
 
         if full_params['net_type'] == 'DaleNet':
-            # print('assertion test for daleNet')
             assert (net.W.data>=0.).all()
 
         losses[epoch] = loss.detach().item()
@@ -245,10 +230,10 @@ def main(full_params, seed):
 
 
         if losses[epoch] > 1e2:
-            logging.critical('Loss became much too large, stopped training')
-            with open(net.save_folder + 'FAILED.txt', mode='w+') as f:
-                f.write('Failed at training epoch {}'.format(epoch))
-            return
+            logging.critical(f'Loss is getting large ! {losses[epoch]}')
+
+        if losses[epoch] > 1e4:
+            raise RuntimeError(f'Loss is getting way too large ! {losses[epoch]}')
 
         # store best_net on cpu to free some gpu memory
         # .75 here to avoid having to transfer model back and forth to cpu at every step...
@@ -264,15 +249,16 @@ def main(full_params, seed):
             best_loss = losses[epoch]
             logging.info('New best loss {} at step {}, T{}[seed{}]'.format(losses[epoch], epoch,
                                         sampler_params['epoch_length'], seed))
+        else:
+            if epoch % 100 == 0:
+                logging.info('loss {} step {}, T{}[seed{}]'.format(losses[epoch], epoch,
+                                        sampler_params['epoch_length'], seed))
 
         if epoch % 100 == 0:
-            # with warnings.catch_warnings():
-            #     warnings.simplefilter('ignore') # Suppress the warning for missing glyph
             plt.figure()
             plt.semilogy(losses[:epoch])
             plt.savefig(net.save_folder + 'loss.png')
             plt.close()
-            # with open(net.save_folder + 'losses.txt', "ab") as f:
             np.savetxt(net.save_folder + 'losses.txt', losses)
 
             if not full_params['net_type'] == 'NonLinearDecoder':
@@ -301,8 +287,6 @@ def main(full_params, seed):
                         ax[1].set_ylabel('Normalized dot product e.e_start')
                         fig.savefig(net.save_folder + 'e_evolution_channel_{}.png'.format(c))
                         plt.close(fig)
-
-            # with open(net.save_folder + 'losses.txt', "ab") as f:
             np.savetxt(net.save_folder + 'losses.txt', losses)
         if losses[epoch] <= stop_loss:
             losses[epoch:] = losses[epoch]
@@ -318,3 +302,4 @@ def main(full_params, seed):
     tch.save(net, net.save_folder + 'best_net.pt')
     net.activation_function = bkp
     do_tests(net, 'final')
+    print(f"Exiting main for params {full_params}, seed {seed}")
