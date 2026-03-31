@@ -1,15 +1,13 @@
-Supporting code for "Low-Dimensional manifolds support multiplexed integrations in Recurrent Neural Networks" by Arnaud Fanthomme and Rémi Monasson.
+Supporting code for Fanthomme, A. and Monasson, R. (2021), Low-Dimensional Manifolds Support Multiplexed Integrations in Recurrent Neural Networks, Neural Computation, 33(4), 1063-1112 [arXiv:2011.10435].
 
 This is a legacy project, and does not represent best coding practices. 
 
 # 2026 Update: 
-The current main branch represents the code has it was executed in March 2026.
+The current main branch represents the code as it was executed in March 2026.
 
-We introduced containerization for easier execution, and had to update some scripts to account for dependency changes.
+We introduced containerization for easier execution, and had to update scripts to account for dependency changes.
 
-We reproduced experiments for ReLU non-linearity, without any issue, but found the sigmoid case much harder to train.\
-Due to this activation's niche relevance, and the code's poor maintainability, we did not perform full diagnostics for sigmoid.
-
+We reproduced experiments for ReLU non-linearity without any issue and used those for the following ilustrations.
 
 # Goal 
 
@@ -43,7 +41,7 @@ The most relevant findings are:
   <img src="illustrations/relu_slow_decay_sgd_T3_sanity_check.png" width="90%" />
 </p>
 
-* RNNs performing $D$ integrals have their internal states live in a $D$-dimensional manifold.
+* RNNs performing $D$ integrals have their internal states live close to a $D$-dimensional manifold.
 * Coordinates on the manifold can be computed from the current value of the integrals.
 
 <p align="center">
