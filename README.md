@@ -100,8 +100,7 @@ Some unanswered questions:
 
 # Rerunning the experiments:
 
-Only GPU machines are supported. We encourage either running the code locally (will require CUDA binaries and CUDA Docker toolkit on the host machine, see https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html for installation instructions), or via Google Cloud where we make a built image available:
-
+Only GPU machines are supported. We encourage running the code locally or in the cloud (will require CUDA binaries and CUDA Docker toolkit on the host machine, see https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html for installation instructions).
 After cloning the repository on your chosen machine, please use:
 ```
 bash run.sh python setup.py
@@ -115,7 +114,7 @@ bash run.sh python 2026_reproduce.py
 ```
 
 to reproduce the most important findings of the paper without having to go through the very extensive list of experiments
-that lead to those results. We also do not present all intermediate checks performed to avoid making things too heavy, but strong emphassis was put on ensuring complete observability of all aspect of our theory.
+that lead to those results. We also do not present all intermediate checks performed to avoid making things too heavy, but strong emphasis was put on ensuring complete observability of all aspect of our theory.
 
 Because of this, each experiment produces **a lot** of plots for each training run. While those are vector graphics and not heavy on their own, the results folder can easily climb to 10Gb if you rerun everything.
 
